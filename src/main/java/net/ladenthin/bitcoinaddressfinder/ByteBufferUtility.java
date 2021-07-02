@@ -20,7 +20,11 @@ package net.ladenthin.bitcoinaddressfinder;
 
 import java.nio.ByteBuffer;
 import org.bouncycastle.util.encoders.Hex;
+#if JAVA_9_OR_LATER
 import sun.misc.Cleaner;
+#else
+import jdk.internal.ref.Cleaner;
+#endif
 import sun.nio.ch.DirectBuffer;
 
 public class ByteBufferUtility {

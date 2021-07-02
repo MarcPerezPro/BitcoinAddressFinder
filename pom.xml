@@ -16,6 +16,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <slf4j.version>2.0.0-alpha1</slf4j.version>
         <logback.version>1.3.0-alpha5</logback.version>
+        <manifold.version>2021.1.14</manifold.version>
     </properties>
     
     
@@ -39,6 +40,18 @@
                 <configuration>
                     <source>1.8</source>
                     <target>1.8</target>
+                    <compilerArgs>
+                        <!-- Configure manifold plugin -->
+                        <arg>-Xplugin:Manifold</arg>
+                    </compilerArgs>
+                    <!-- Add the processor path for the plugin -->
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>systems.manifold</groupId>
+                            <artifactId>manifold-preprocessor</artifactId>
+                            <version>${manifold.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
             <plugin>
