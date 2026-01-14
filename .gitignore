@@ -36,3 +36,8 @@ hs_err_pid*
 
 # Netbeans files
 nbactions.xml
+
+# Tests
+src/test/resources/testRoundtrip/export.txt
+src/test/resources/testRoundtrip/lmdb/data.mdb
+src/test/resources/testRoundtrip/lmdb/lock.mdb
