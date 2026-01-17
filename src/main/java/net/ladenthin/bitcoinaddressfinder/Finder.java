@@ -30,12 +30,14 @@ import java.util.concurrent.TimeUnit;
 import net.ladenthin.bitcoinaddressfinder.configuration.CConsumerJava;
 import net.ladenthin.bitcoinaddressfinder.configuration.CFinder;
 import net.ladenthin.bitcoinaddressfinder.configuration.CProducer;
+import net.ladenthin.bitcoinaddressfinder.configuration.CProducerJava;
 import net.ladenthin.bitcoinaddressfinder.persistence.PersistenceUtils;
 import org.bitcoinj.base.Network;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.function.*;
+import net.ladenthin.bitcoinaddressfinder.keyproducer.AbstractKeyProducerQueueBuffered;
 import net.ladenthin.bitcoinaddressfinder.keyproducer.KeyProducer;
 import net.ladenthin.bitcoinaddressfinder.keyproducer.KeyProducerIdIsNotUniqueException;
 import net.ladenthin.bitcoinaddressfinder.keyproducer.KeyProducerIdNullException;
@@ -182,6 +184,26 @@ public class Finder implements Interruptable {
                 (config, keyProducer) -> new ProducerOpenCL(config, localConsumerJava, keyUtility, keyProducer, bitHelper),
                 openCLProducers
         );
+
+        // If no producers are configured but there are queue-buffered key producers (WebSocket, Socket, ZMQ),
+        // create default ProducerJava instances for each to allow external scripts to send keys
+        if (javaProducers.isEmpty()) {
+            boolean hasQueueBufferedKeyProducers = keyProducers.values().stream().anyMatch(kp -> kp instanceof AbstractKeyProducerQueueBuffered);
+            if (hasQueueBufferedKeyProducers) {
+                for (Map.Entry<String, KeyProducer> entry : keyProducers.entrySet()) {
+                    if (entry.getValue() instanceof AbstractKeyProducerQueueBuffered) {
+                        CProducerJava defaultConfig = new CProducerJava();
+                        defaultConfig.keyProducerId = entry.getKey();
+                        defaultConfig.batchSizeInBits = 0;
+                        defaultConfig.batchUsePrivateKeyIncrement = false;
+                        defaultConfig.runOnce = false;
+                        KeyProducer keyProducer = getKeyProducer(defaultConfig);
+                        ProducerJava producer = new ProducerJava(defaultConfig, localConsumerJava, keyUtility, keyProducer, bitHelper);
+                        javaProducers.add(producer);
+                    }
+                }
+            }
+        }
     }
     
     private <T extends CProducer, P> void processProducers(
@@ -225,11 +247,27 @@ public class Finder implements Interruptable {
     
     public void shutdownAndAwaitTermination() {
         logger.info("shutdownAndAwaitTermination");
-        try {
-            producerExecutorService.shutdown();
-            producerExecutorService.awaitTermination(AWAIT_DURATION_TERMINATE.get(ChronoUnit.SECONDS), TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+        boolean hasQueueBufferedKeyProducers = keyProducers.values().stream().anyMatch(kp -> kp instanceof AbstractKeyProducerQueueBuffered);
+        if (!hasQueueBufferedKeyProducers) {
+            try {
+                producerExecutorService.shutdown();
+                producerExecutorService.awaitTermination(AWAIT_DURATION_TERMINATE.get(ChronoUnit.SECONDS), TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        } else {
+            // For queue-buffered producers, wait indefinitely
+            try {
+                producerExecutorService.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                // Interrupted, shutdown
+                producerExecutorService.shutdown();
+                try {
+                    producerExecutorService.awaitTermination(AWAIT_DURATION_TERMINATE.get(ChronoUnit.SECONDS), TimeUnit.SECONDS);
+                } catch (InterruptedException ie) {
+                    throw new RuntimeException(ie);
+                }
+            }
         }
         
         // no producers are running anymore, the consumer can be interrupted
@@ -245,15 +283,19 @@ public class Finder implements Interruptable {
     public void interrupt() {
         logger.info("interrupt called: delegate interrupt to all keyProducers and producers");
         
-        // Interrupt all Producers
-        for (Producer producer : getAllProducers()) {
-            logger.info("Interrupt Producer: " + producer.toString());
-            producer.interrupt();
-            logger.info("waitTillProducerNotRunning ...");
-            producer.waitTillProducerNotRunning();
-            producer.releaseProducer();
+        boolean hasQueueBufferedKeyProducers = keyProducers.values().stream().anyMatch(kp -> kp instanceof AbstractKeyProducerQueueBuffered);
+        
+        if (!hasQueueBufferedKeyProducers) {
+            // Interrupt all Producers
+            for (Producer producer : getAllProducers()) {
+                logger.info("Interrupt Producer: " + producer.toString());
+                producer.interrupt();
+                logger.info("waitTillProducerNotRunning ...");
+                producer.waitTillProducerNotRunning();
+                producer.releaseProducer();
+            }
+            freeAllProducers();
         }
-        freeAllProducers();
         
         // Interrupt all KeyProducers
         for (KeyProducer keyProducer : getKeyProducers().values()) {

@@ -19,6 +19,7 @@
 package net.ladenthin.bitcoinaddressfinder;
 
 import net.ladenthin.bitcoinaddressfinder.configuration.CProducer;
+import net.ladenthin.bitcoinaddressfinder.keyproducer.AbstractKeyProducerQueueBuffered;
 import net.ladenthin.bitcoinaddressfinder.keyproducer.KeyProducer;
 import net.ladenthin.bitcoinaddressfinder.keyproducer.NoMoreSecretsAvailableException;
 import org.apache.commons.codec.binary.Hex;
@@ -89,8 +90,19 @@ public abstract class AbstractProducer implements Producer {
             try {
                 secrets = keyProducer.createSecrets(cProducer.getOverallWorkSize(bitHelper), cProducer.batchUsePrivateKeyIncrement);
             } catch (NoMoreSecretsAvailableException ex) {
-                logNoMoreSecretsInSecretFactory();
-                interrupt();
+                if (!(keyProducer instanceof AbstractKeyProducerQueueBuffered)) {
+                    logNoMoreSecretsInSecretFactory();
+                    interrupt();
+                } else {
+                    // For queue-buffered producers, wait a bit before retrying
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        shouldRun.set(false);
+                        return;
+                    }
+                }
                 return;
             }
             
